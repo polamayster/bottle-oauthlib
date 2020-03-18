@@ -1,12 +1,12 @@
-import bottle
-from bottle import HTTPError
 import functools
 import json
-from oauthlib.common import add_params_to_uri
-from oauthlib.oauth2 import FatalClientError
-from oauthlib.oauth2 import OAuth2Error
-import requests
 import logging
+
+import bottle
+import requests
+from bottle import HTTPError
+from oauthlib.common import add_params_to_uri
+from oauthlib.oauth2 import FatalClientError, OAuth2Error
 
 log = logging.getLogger(__name__)
 
@@ -25,18 +25,42 @@ def extract_params(bottle_request):
     # this returns (None, None) for Bearer Token.
     username, password = bottle_request.auth if bottle_request.auth else (None, None)
 
-    if "application/x-www-form-urlencoded" in bottle_request.content_type:
-        client = {}
+    client = {}
+    if bottle_request.auth:
         if username is not None:
             client["client_id"] = username
         if password is not None:
             client["client_secret"] = password
+
+    # PUT/POST request
+    if "application/x-www-form-urlencoded" in bottle_request.content_type:
+        # todo: what about getting credentials from request payload (DCR)
         return \
             bottle_request.url, \
             bottle_request.method, \
             dict(client, **bottle_request.forms), \
             dict(bottle_request.headers)
 
+    if "application/json" in bottle_request.content_type:
+        try:
+            body = bottle_request.json
+        except (ValueError, AttributeError):
+            body = {}
+
+        if not bottle_request.auth and body:
+            if "client_id" in body:
+                client["client_id"] = body["client_id"]
+            if "client_secret" in body:
+                client["client_secret"] = body["client_secret"]
+
+        return (
+            bottle_request.url,
+            bottle_request.method,
+            dict(client, **body),
+            dict(bottle_request.headers),
+        )
+
+    # GET request
     basic_auth = {}
     body = bottle_request.body
 
@@ -313,6 +337,125 @@ class BottleOAuth2(object):
                              resp_body, force_json=True)
 
                 func_response = f(*args, **kwargs)
+                if func_response:
+                    return func_response
+                return bottle.response
+            return wrapper
+        return decorator
+
+    # todo: DRY - all these methods are just copy paste, add tests
+    def create_registration_response(self):
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(*args, **kwargs):
+                assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
+
+                uri, http_method, body, headers = extract_params(bottle.request)
+
+                try:
+                    resp_headers, resp_body, resp_status = self._oauthlib.create_registration_response(
+                        uri, http_method=http_method, body=body, headers=headers
+                    )
+                except OAuth2Error as e:
+                    resp_headers, resp_body, resp_status = e.headers, e.json, e.status_code
+
+                set_response(bottle.request, bottle.response, resp_status, resp_headers,
+                             resp_body, force_json=True)
+
+                func_response = f(*args, **kwargs)
+                if func_response:
+                    return func_response
+                return bottle.response
+            return wrapper
+        return decorator
+
+    def create_client_info_response(self):
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(client_id, *args, **kwargs):
+                assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
+                uri, http_method, body, headers = extract_params(bottle.request)
+
+                try:
+                    resp_headers, resp_body, resp_status = self._oauthlib.create_client_info_response(
+                        client_id, uri, http_method=http_method, body=body, headers=headers
+                    )
+
+                except OAuth2Error as e:
+                    resp_headers, resp_body, resp_status = e.headers, e.json, e.status_code
+
+                set_response(bottle.request, bottle.response, resp_status, resp_headers, resp_body)
+
+                func_response = f(client_id, *args, **kwargs)
+                if func_response:
+                    return func_response
+                return bottle.response
+            return wrapper
+        return decorator
+
+    def create_clients_info_response(self):
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(*args, **kwargs):
+                assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
+
+                uri, http_method, body, headers = extract_params(bottle.request)
+
+                try:
+                    resp_headers, resp_body, resp_status = self._oauthlib.create_clients_info_response(
+                        uri, http_method=http_method, body=body, headers=headers
+                    )
+                except OAuth2Error as e:
+                    resp_headers, resp_body, resp_status = e.headers, e.json, e.status_code
+
+                set_response(bottle.request, bottle.response, resp_status, resp_headers, resp_body)
+
+                func_response = f(*args, **kwargs)
+                if func_response:
+                    return func_response
+                return bottle.response
+            return wrapper
+        return decorator
+
+    def create_client_delete_response(self):
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(client_id, *args, **kwargs):
+                assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
+                uri, http_method, body, headers = extract_params(bottle.request)
+
+                try:
+                    resp_headers, resp_body, resp_status = self._oauthlib.create_client_delete_response(
+                        client_id, uri, http_method=http_method, body=body, headers=headers
+                    )
+
+                except OAuth2Error as e:
+                    resp_headers, resp_body, resp_status = e.headers, e.json, e.status_code
+
+                set_response(bottle.request, bottle.response, resp_status, resp_headers, resp_body)
+
+                func_response = f(client_id, *args, **kwargs)
+                if func_response:
+                    return func_response
+                return bottle.response
+            return wrapper
+        return decorator
+
+    def create_client_update_response(self):
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(client_id, *args, **kwargs):
+                assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
+                uri, http_method, body, headers = extract_params(bottle.request)
+                try:
+                    resp_headers, resp_body, resp_status = self._oauthlib.create_client_update_response(
+                        client_id, uri, http_method=http_method, body=body, headers=headers
+                    )
+                except OAuth2Error as e:
+                    resp_headers, resp_body, resp_status = e.headers, e.json, e.status_code
+                set_response(bottle.request, bottle.response, resp_status, resp_headers,
+                             resp_body, force_json=True)
+                func_response = f(client_id, *args, **kwargs)
                 if func_response:
                     return func_response
                 return bottle.response
